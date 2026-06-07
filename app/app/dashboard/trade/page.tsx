@@ -12,7 +12,6 @@ export default function TerminalWorkspacePage() {
   const [coin, setCoin] = useState<string>("BTC");
   const availableMarkets = ["BTC", "ETH", "SOL", "HYPE", "ARB"];
 
-  // Central Streaming Hook wired directly into your Rust Proxy Framework Layer
   const { 
     bids, 
     asks, 
@@ -24,27 +23,31 @@ export default function TerminalWorkspacePage() {
     currentPriceRef 
   } = useHyperliquidStream({
     coin,
-    proxyRestUrl: "https://api.hyperliquid.xyz", // Replace with local network url if proxy overrides info route
-    proxyWsUrl: "ws://localhost:3001/ws"        // Target point routing inside your Rust architecture loop
+    proxyRestUrl: "https://api.hyperliquid.xyz",
+    proxyWsUrl: "ws://localhost:3001/ws"
   });
 
-
-  
-
   return (
-    <div className="h-screen w-screen bg-[#07090b] text-[#8e9aa9] text-xs flex flex-col overflow-hidden">
-      <Navbar />
+    // REMOVED overflow-hidden here. This is the key to letting the dropdown break out.
+    // We use h-screen to ensure it still occupies the full viewport.
+    <div className="h-screen w-screen bg-[#07090b] text-[#8e9aa9] text-xs flex flex-col">
       
-      <MarketStatsStrip 
-        coin={coin} 
-        setCoin={setCoin} 
-        markPrice={markPrice} 
-        availableMarkets={availableMarkets} 
-      />
+      {/* HEADER SECTION: Z-index high to ensure it floats above everything */}
+      <div className="relative z-50 flex-shrink-0">
+        <Navbar />
+        <MarketStatsStrip 
+          coin={coin} 
+          setCoin={setCoin} 
+          markPrice={markPrice} 
+          availableMarkets={availableMarkets} 
+        />
+      </div>
 
-      <div className="w-full flex-grow flex flex-row min-h-0 overflow-hidden">
+      {/* MAIN CONTENT AREA: flex-grow fills space, overflow-hidden here is okay 
+          because the header is no longer a child of this container */}
+      <div className="flex-grow flex flex-row min-h-0 w-full overflow-hidden">
         
-        {/* Left Container Panel Matrix: Interactive Graphics Canvas Context */}
+        {/* Left Container: Chart */}
         <div className="flex-[14_14_0%] flex flex-col border-r border-[#171c22] min-w-0 h-full">
           <div className="h-8 bg-[#0e1114] border-b border-[#171c22] px-3 flex items-center justify-between shrink-0">
             <div className="flex items-center space-x-3 font-mono text-[11px] text-neutral-400">
@@ -53,11 +56,13 @@ export default function TerminalWorkspacePage() {
             </div>
           </div>
           
-          <TradingChart 
-            coin={coin} 
-            currentPriceRef={currentPriceRef} 
-            candleHistoryRef={candleHistoryRef} 
-          />
+          <div className="flex-grow min-h-0">
+            <TradingChart 
+              coin={coin} 
+              currentPriceRef={currentPriceRef} 
+              candleHistoryRef={candleHistoryRef} 
+            />
+          </div>
 
           <div className="h-40 bg-[#0e1114] border-t border-[#171c22] flex flex-col shrink-0">
             <div className="h-8 border-b border-[#171c22] px-4 flex items-center space-x-5 text-[11px] font-bold text-neutral-400 shrink-0">
@@ -70,7 +75,7 @@ export default function TerminalWorkspacePage() {
           </div>
         </div>
 
-        {/* Middle Container Panel Matrix: Live Depth and Tape Matrices */}
+        {/* Middle Container: Order Book */}
         <div className="flex-[4_4_0%] border-r border-[#171c22] flex flex-col min-w-0 h-full">
           <MarketDepthPanel 
             bids={bids} 
@@ -82,7 +87,7 @@ export default function TerminalWorkspacePage() {
           />
         </div>
 
-        {/* Right Container Panel Matrix: Transaction Entry Desk Desk Layout */}
+        {/* Right Container: Execution */}
         <div className="flex-[4_4_0%] flex flex-col min-w-[220px] h-full">
           <ExecutionTerminal coin={coin} markPrice={markPrice} />
         </div>

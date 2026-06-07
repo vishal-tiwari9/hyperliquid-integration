@@ -5,187 +5,109 @@ use axum::{
     Json, Router,
 };
 use futures_util::{SinkExt, StreamExt};
-use serde_json::Value;
-use std::{collections::{HashMap, HashSet}, net::SocketAddr, sync::Arc};
-use tokio::sync::{broadcast, RwLock};
+use serde_json::{json, Value};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc};
+use tokio::sync::{broadcast, mpsc, RwLock};
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
-// Official High-Fidelity Mainnet Production Production Endpoints
 const HL_MAINNET_WS: &str = "wss://api.hyperliquid.xyz/ws";
-const HL_INFO_URL: &str = "https://api.hyperliquid.xyz/info";
-
-type SharedOrderbooks = Arc<RwLock<HashMap<String, Value>>>;
 
 #[derive(Clone)]
 struct AppState {
-    orderbooks: SharedOrderbooks,
-    // High-performance message pipeline handling all real-time tickers smoothly
-    global_pipeline_tx: broadcast::Sender<Value>,
+    // Tracks count of active subscribers per asset
+    sub_registry: Arc<RwLock<HashMap<String, usize>>>,
+    // Command channel to notify ingress worker of new subscription needs
+    cmd_tx: mpsc::Sender<WsMessage>,
+    pipeline_tx: broadcast::Sender<Value>,
 }
 
 #[tokio::main]
 async fn main() {
-    rustls::crypto::ring::default_provider()
-        .install_default()
-        .expect("Failed to initialize cryptographic ring provider context");
-
-    // Unified broadcast channel supporting up to 1024 backlogged frames
-    let (global_pipeline_tx, _) = broadcast::channel::<Value>(1024);
-    let orderbooks: SharedOrderbooks = Arc::new(RwLock::new(HashMap::new()));
+    let (pipeline_tx, _) = broadcast::channel::<Value>(2048);
+    let (cmd_tx, cmd_rx) = mpsc::channel(100);
+    let sub_registry = Arc::new(RwLock::new(HashMap::new()));
 
     let state = AppState {
-        orderbooks,
-        global_pipeline_tx,
+        sub_registry,
+        cmd_tx,
+        pipeline_tx,
     };
 
-    // Spawn the central background processing service
-    tokio::spawn(ingress_data_worker(state.clone()));
+    tokio::spawn(ingress_data_worker(state.clone(), cmd_rx));
 
     let app = Router::new()
-        .route("/ws", get(ws_router_handler))
-        .route("/health", get(|| async { "OK" }))
-        .route("/markets", get(retrieve_active_markets))
+        .route("/ws", get(ws_handler))
         .with_state(state)
         .layer(tower_http::cors::CorsLayer::permissive());
 
-    let listen_addr = SocketAddr::from(([0, 0, 0, 0], 3001));
-    println!("🚀 Mochtrade Production Proxy Running @ http://localhost:3001");
-
-    axum::serve(tokio::net::TcpListener::bind(listen_addr).await.unwrap(), app)
-        .await
-        .unwrap();
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:3001").await.unwrap();
+    println!("🚀 Production Proxy Live @ :3001");
+    axum::serve(listener, app).await.unwrap();
 }
 
-async fn retrieve_active_markets(State(state): State<AppState>) -> Json<Value> {
-    let memory_books = state.orderbooks.read().await;
-    Json(serde_json::json!({
-        "markets": memory_books.keys().collect::<Vec<_>>(),
-        "count": memory_books.len()
-    }))
-}
-
-// ==================== HIGH-PERFORMANCE INGRESS WORKER ====================
-async fn ingress_data_worker(state: AppState) {
+async fn ingress_data_worker(state: AppState, mut cmd_rx: mpsc::Receiver<WsMessage>) {
     loop {
-        println!("📡 Connecting to Hyperliquid Live Mainnet Cluster Pipeline...");
+        if let Ok((mut ws, _)) = tokio_tungstenite::connect_async(HL_MAINNET_WS).await {
+            println!("✅ Connected to Hyperliquid");
+            
+            // Re-subscribe to all active assets on reconnection
+            let current_assets: Vec<String> = {
+                let registry = state.sub_registry.read().await;
+                registry.keys().cloned().collect()
+            };
+            
+            for asset in current_assets {
+                let _ = ws.send(WsMessage::Text(json!({"method":"subscribe","subscription":{"type":"l2Book","coin":asset}}).to_string().into())).await;
+            }
 
-        match tokio_tungstenite::connect_async(HL_MAINNET_WS).await {
-            Ok((mut upstream_ws, _)) => {
-                println!("✅ Connected to Hyperliquid Production Wire Network!");
-
-                let asset_universe = fetch_production_universe().await.unwrap_or_else(|_| vec!["BTC".to_string()]);
-
-                // 1. Subscribe to the Global Ticker Matrix Channel
-                let all_mids_payload = serde_json::json!({
-                    "method": "subscribe",
-                    "subscription": { "type": "allMids" }
-                });
-                let _ = upstream_ws.send(WsMessage::Text(all_mids_payload.to_string().into())).await;
-
-                // 2. Multiplex Asset Orderbook feeds into the ingest circuit
-                for asset in &asset_universe {
-                    let orderbook_payload = serde_json::json!({
-                        "method": "subscribe",
-                        "subscription": { "type": "l2Book", "coin": asset }
-                    });
-                    let _ = upstream_ws.send(WsMessage::Text(orderbook_payload.to_string().into())).await;
-                }
-                println!("✅ Seamlessly streaming real-time metrics for {} markets", asset_universe.len());
-
-                // Primary Network Processing Loop
-                while let Some(Ok(ws_frame)) = upstream_ws.next().await {
-                    if let WsMessage::Text(raw_payload) = ws_frame {
-                        if let Ok(json_value) = serde_json::from_str::<Value>(&raw_payload) {
-                            
-                            // Extract information via the correct top-level channel identifier
-                            if let Some(channel_name) = json_value.get("channel").and_then(|c| c.as_str()) {
-                                if channel_name == "l2Book" {
-                                    if let Some(asset_name) = json_value.get("data").and_then(|d| d.get("coin")).and_then(|c| c.as_str()) {
-                                        let mut books_cache = state.orderbooks.write().await;
-                                        books_cache.insert(asset_name.to_string(), json_value.clone());
-                                    }
-                                }
-                                // Dispatch the frame straight down the internal high-speed routing pipelines
-                                let _ = state.global_pipeline_tx.send(json_value);
+            loop {
+                tokio::select! {
+                    Some(cmd) = cmd_rx.recv() => { let _ = ws.send(cmd).await; }
+                    Some(Ok(msg)) = ws.next() => {
+                        if let WsMessage::Text(t) = msg {
+                            if let Ok(val) = serde_json::from_str::<Value>(&t) {
+                                let _ = state.pipeline_tx.send(val);
                             }
                         }
                     }
                 }
             }
-            Err(err) => {
-                eprintln!("❌ Core network link dropped: {:?}. Attempting connection recovery in 3s...", err);
-                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-            }
         }
+        tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
     }
 }
 
-async fn fetch_production_universe() -> Result<Vec<String>, Box<dyn std::error::Error>> {
-    let client = reqwest::Client::new();
-    let edge_response = client.post(HL_INFO_URL)
-        .json(&serde_json::json!({"type": "meta"}))
-        .send()
-        .await?;
-
-    let structural_meta: Value = edge_response.json().await?;
-    let universe_array = structural_meta["universe"].as_array().ok_or("Malformed structural metadata format")?;
-
-    Ok(universe_array.iter()
-        .filter_map(|asset| asset["name"].as_str().map(|name_str| name_str.to_string()))
-        .collect())
+async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| handle_client(socket, state))
 }
 
-// ==================== PIPELINE MULTIPLEXER (Frontend Client Room) ====================
-async fn ws_router_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
-    ws.on_upgrade(move |client_socket| execute_client_lifecycle(client_socket, state))
-}
+async fn handle_client(socket: axum::extract::ws::WebSocket, state: AppState) {
+    let (mut sink, mut stream) = socket.split();
+    let mut rx = state.pipeline_tx.subscribe();
+    let mut client_subs = Vec::new();
 
-async fn execute_client_lifecycle(mut client_socket: axum::extract::ws::WebSocket, state: AppState) {
-    println!("🔌 Local client interface pipe initialized");
-
-    let mut local_pipeline_rx = state.global_pipeline_tx.subscribe();
-    let mut tracked_assets: HashSet<String> = HashSet::new();
-
-    loop {
+    while let Some(msg) = stream.next().await {
+        if let Ok(axum::extract::ws::Message::Text(t)) = msg {
+            if let Ok(v) = serde_json::from_str::<Value>(&t) {
+                if v["action"] == "subscribe" {
+                    let coin = v["coin"].as_str().unwrap().to_string();
+                    client_subs.push(coin.clone());
+                    
+                    // Update registry and tell worker to sub upstream
+                    state.sub_registry.write().await.entry(coin.clone()).and_modify(|e| *e += 1).or_insert(1);
+                    let _ = state.cmd_tx.send(WsMessage::Text(json!({"method":"subscribe","subscription":{"type":"l2Book","coin":coin}}).to_string().into())).await;
+                }
+            }
+        }
+        
+        // Broadcast listener loop inside client task
         tokio::select! {
-            // Intercept downstream commands from the UI
-            Some(Ok(client_frame)) = client_socket.recv() => {
-                if let axum::extract::ws::Message::Text(payload_text) = client_frame {
-                    if let Ok(ui_command) = serde_json::from_str::<Value>(&payload_text) {
-                        if ui_command["action"].as_str() == Some("subscribe") {
-                            if let Some(target_coin) = ui_command["coin"].as_str() {
-                                tracked_assets.insert(target_coin.to_string());
-                                println!("📌 Client context locked tracking loop onto target ticker: {}", target_coin);
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Route matching backend messages immediately down to the client layout layer
-            Ok(incoming_exchange_frame) = local_pipeline_rx.recv() => {
-                if let Some(channel) = incoming_exchange_frame.get("channel").and_then(|c| c.as_str()) {
-                    let should_dispatch = match channel {
-                        "allMids" => true, // Route global metrics directly to populate market lists
-                        "l2Book" => {
-                            if let Some(coin) = incoming_exchange_frame.get("data").and_then(|d| d.get("coin")).and_then(|c| c.as_str()) {
-                                tracked_assets.contains(coin)
-                            } else {
-                                false
-                            }
-                        },
-                        _ => false
-                    };
-
-                    if should_dispatch {
-                        let serial_string = incoming_exchange_frame.to_string();
-                        if client_socket.send(axum::extract::ws::Message::Text(serial_string.into())).await.is_err() {
-                            break; // Gracefully terminate the connection if the socket breaks
-                        }
-                    }
+            Ok(data) = rx.recv() => {
+                let coin = data["data"]["coin"].as_str().unwrap_or("");
+                if client_subs.contains(&coin.to_string()) || data["channel"] == "allMids" {
+                    let _ = sink.send(axum::extract::ws::Message::Text(data.to_string().into())).await;
                 }
             }
         }
     }
-    println!("❌ Local client dashboard channel disconnected");
 }
