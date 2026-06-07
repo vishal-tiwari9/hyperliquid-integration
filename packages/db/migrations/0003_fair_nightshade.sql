@@ -1,0 +1,1 @@
+ALTER TABLE "users" ALTER COLUMN "privy_id" DROP NOT NULL;

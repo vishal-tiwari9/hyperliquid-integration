@@ -8,6 +8,27 @@
       "when": 1780670066456,
       "tag": "0000_complete_fat_cobra",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1780773802439,
+      "tag": "0001_majestic_alice",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1780809763765,
+      "tag": "0002_military_malcolm_colcord",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1780812235828,
+      "tag": "0003_fair_nightshade",
+      "breakpoints": true
     }
   ]
 }

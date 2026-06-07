@@ -3,8 +3,8 @@
   "version": "1.0.0",
   "description": "",
   "main": "./dist/index.js",
-  "types":"./dist/index.d.ts",
- "scripts": {
+  "types": "./dist/index.d.ts",
+  "scripts": {
     "build": "tsc",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push"
@@ -12,11 +12,14 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs",
+  "type": "module",
   "devDependencies": {
     "@types/pg": "^8.20.0",
     "drizzle-kit": "^0.31.10",
     "pg": "^8.21.0",
     "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "postgres": "^3.4.9"
   }
 }
