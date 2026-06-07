@@ -1,7 +1,11 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  reactStrictMode: true,
+  env: {
+    PRIVY_APP_ID: process.env.PRIVY_APP_ID,
+  },
+  
 };
 
 export default nextConfig;
