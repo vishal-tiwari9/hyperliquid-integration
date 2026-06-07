@@ -75,7 +75,7 @@ export default function LandingPage() {
           </p>
 
           <button
-            onClick={authenticated ? () => router.push("/dashboard") : handleGetStarted}
+            onClick={authenticated ? () => router.push("/dashboard/trade") : handleGetStarted}
             disabled={isLoading}
             className="px-10 py-4 text-xl font-semibold bg-gradient-to-r from-blue-600 to-purple-600 rounded-3xl hover:scale-105 active:scale-95 transition-all duration-200 shadow-xl shadow-blue-500/30"
           >
