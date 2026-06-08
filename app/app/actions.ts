@@ -1,7 +1,7 @@
 // app/actions.ts
 "use server";
 
-import { db } from "../../packages/db/src/index.ts";
+import { db } from "../../packages/db/src/index";
 import { users, userWallets } from "../../packages/db/src/schema";
 import { eq } from "drizzle-orm";
 

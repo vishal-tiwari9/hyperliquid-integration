@@ -1,0 +1,23 @@
+{
+  "name": "mochatrade-monorepo",
+  "private": true,
+  "workspaces": [
+    "app",
+    "packages/db"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=app",
+    "build": "npm run build --workspace=app",
+    "db:generate": "npm run db:generate --workspace=packages/db",
+    "db:push": "npm run db:push --workspace=packages/db"
+  },
+  
+"dependencies": {
+  "db": "file:../packages/db"
+},
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "drizzle-kit": "^0.31.10",
+    "typescript": "^5.9.3"
+  }
+}

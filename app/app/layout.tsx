@@ -1,12 +1,14 @@
 // app/layout.tsx
 import type { Metadata } from "next";
-import Providers from "./providers"; // Import your client wrapper
+import Providers from "./providers";
 import "./globals.css";
 
-// ✅ This works perfectly now because layout is a Server Component!
 export const metadata: Metadata = {
   title: "Mochtrade",
   description: "Trade US Stocks with Leverage via Hyperliquid",
+  icons: {
+    icon: "/logo.svg",
+  },
 };
 
 export default function RootLayout({
@@ -17,7 +19,6 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
-        {/* Pass children inside the client wrapper here */}
         <Providers>
           {children}
         </Providers>
