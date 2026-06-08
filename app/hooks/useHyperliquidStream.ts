@@ -1,6 +1,18 @@
 "use client";
+// hooks/useHyperliquidStream.ts
+//
+// CHANGES FROM ORIGINAL:
+//   1. Reads PROXY_CONFIG from config.ts — no more hard-coded localhost strings
+//   2. Subscribes to allMids for live mark-price updates (was missing entirely)
+//   3. Routes REST candle requests through the Rust proxy (/info endpoint)
+//   4. Subscription format already matched HL native {method,subscription} — no change needed
+//   5. Improved reconnection: tracks shouldReconnect flag to prevent zombie retries
+//   6. Price now updated from allMids stream, not only from order-book mid calculation
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
+import { PROXY_CONFIG } from "@/lib/config";
+
+// ─── Public types ─────────────────────────────────────────────────────────────
 
 export interface OrderbookLevel {
   price: number;
@@ -25,217 +37,289 @@ export interface CandleData {
   volume: number;
 }
 
-interface UseHyperliquidStreamProps {
-  coin: string;
-  proxyRestUrl: string; // Hyperliquid Info URL: e.g., https://api.hyperliquid.xyz
-  proxyWsUrl: string;   // Hyperliquid WS URL: e.g., wss://api.hyperliquid.xyz/ws
+export interface StreamState {
+  isConnected: boolean;
+  bids: OrderbookLevel[];
+  asks: OrderbookLevel[];
+  maxBookTotal: number;
+  recentTrades: PublicTrade[];
+  markPrice: number;
+  indexPrice: number;
+  spread: { absolute: number; percent: number };
+  /** Ref to full candle history (avoids React render on every frame) */
+  candleHistoryRef: React.MutableRefObject<CandleData[]>;
+  /** Ref to current live price (avoids React render on every tick) */
+  currentPriceRef: React.MutableRefObject<number>;
 }
 
-export const useHyperliquidStream = ({ coin, proxyRestUrl, proxyWsUrl }: UseHyperliquidStreamProps) => {
+// ─── Hook ─────────────────────────────────────────────────────────────────────
+
+export function useHyperliquidStream(coin: string): StreamState {
+  const proxyWsUrl = PROXY_CONFIG.wsUrl;
+  const proxyRestUrl = PROXY_CONFIG.restUrl;
+
+  // React state (triggers re-renders at 100 ms throttle)
   const [isConnected, setIsConnected] = useState(false);
   const [bids, setBids] = useState<OrderbookLevel[]>([]);
   const [asks, setAsks] = useState<OrderbookLevel[]>([]);
   const [maxBookTotal, setMaxBookTotal] = useState(1);
   const [recentTrades, setRecentTrades] = useState<PublicTrade[]>([]);
   const [markPrice, setMarkPrice] = useState(0);
+  const [indexPrice, setIndexPrice] = useState(0);
   const [spread, setSpread] = useState({ absolute: 0, percent: 0 });
 
-  // High-performance state buffers bypassing React renders
-  const incomingBookRef = useRef<{ bids: any[]; asks: any[] }>({ bids: [], asks: [] });
-  const incomingTradesRef = useRef<PublicTrade[]>([]);
-  const candleHistoryRef = useRef<CandleData[]>([]);
+  // High-frequency mutable refs (updated on every WS frame, no re-render)
+  const rawBidsRef = useRef<any[]>([]);
+  const rawAsksRef = useRef<any[]>([]);
+  const tradesRef = useRef<PublicTrade[]>([]);
   const currentPriceRef = useRef<number>(0);
+  const candleHistoryRef = useRef<CandleData[]>([]);
 
-  // 1. HTTP REST Fallback / Initialization Pipe
+  // ── 1. Historical candle bootstrap via REST proxy ──────────────────────────
   useEffect(() => {
-    let isMounted = true;
-    
-    const seedHistoricalData = async () => {
+    let alive = true;
+
+    async function fetchCandles() {
       try {
-        const response = await fetch(`${proxyRestUrl}/info`, {
+        const res = await fetch(`${proxyRestUrl}/info`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             type: "candleSnapshot",
-            req: { coin, interval: "1h", startTime: Date.now() - 200 * 60 * 60 * 1000 },
+            req: {
+              coin: coin.toUpperCase(),
+              interval: "1h",
+              startTime: Date.now() - 200 * 60 * 60 * 1000,
+            },
           }),
         });
-        
-        const records = await response.json();
-        
-        if (Array.isArray(records) && isMounted) {
-          const formatted = records.map((r: any) => ({
-            time: Math.floor(Number(r.t) / 1000),
-            open: parseFloat(r.o),
-            high: parseFloat(r.h),
-            low: parseFloat(r.l),
-            close: parseFloat(r.c),
-            volume: parseFloat(r.v),
-          })).sort((a, b) => a.time - b.time);
+
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const records = await res.json();
+
+        if (Array.isArray(records) && alive) {
+          const formatted: CandleData[] = records
+            .map((r: any) => ({
+              time: Math.floor(Number(r.t) / 1000), // unix seconds for lightweight-charts
+              open: parseFloat(r.o),
+              high: parseFloat(r.h),
+              low: parseFloat(r.l),
+              close: parseFloat(r.c),
+              volume: parseFloat(r.v),
+            }))
+            .sort((a, b) => a.time - b.time);
 
           candleHistoryRef.current = formatted;
+
           if (formatted.length > 0) {
-            const lastClose = formatted[formatted.length - 1].close;
-            currentPriceRef.current = lastClose;
-            setMarkPrice(lastClose);
+            const last = formatted[formatted.length - 1].close;
+            if (currentPriceRef.current === 0) {
+              currentPriceRef.current = last;
+              setMarkPrice(last);
+            }
           }
         }
       } catch (err) {
-        console.error("REST initialization snapshot sync failed:", err);
+        console.warn("[HL Stream] Candle fetch failed:", err);
       }
-    };
+    }
 
-    seedHistoricalData();
-    return () => { isMounted = false; };
+    fetchCandles();
+    return () => {
+      alive = false;
+    };
   }, [coin, proxyRestUrl]);
 
-  // 2. High-Fidelity Active WebSocket Stream Connection Loop
+  // ── 2. Live WebSocket stream ───────────────────────────────────────────────
   useEffect(() => {
     let ws: WebSocket;
-    let pingInterval: NodeJS.Timeout;
-    let uiSyncTimer: NodeJS.Timeout;
-    let reconnectTimeout: NodeJS.Timeout;
-    
-    const connectWS = () => {
-      console.log(`Establishing high-fidelity stream to endpoint: ${proxyWsUrl}`);
+    let pingTimer: ReturnType<typeof setInterval>;
+    let uiTimer: ReturnType<typeof setInterval>;
+    let reconnectTimer: ReturnType<typeof setTimeout>;
+    let shouldReconnect = true;
+
+    function connect() {
+      console.info(`[HL Stream] Connecting to ${proxyWsUrl} for ${coin}`);
       ws = new WebSocket(proxyWsUrl);
 
-      ws.onopen = () => {
-        console.log("WebSocket gateway successfully connected.");
-        setIsConnected(true);
+     ws.onopen = () => {
+    console.info("[HL Stream] WebSocket handshake successful ✅");
+    setIsConnected(true);
 
-        // SYSTEM FIX: Use Hyperliquid's exact subscription syntax format
-        // Channel 1: L2 Liquidity Book Depth Matrix
-        ws.send(JSON.stringify({
-          method: "subscribe",
-          subscription: { type: "l2Book", coin: coin.toUpperCase() }
-        }));
+        // ─ Subscribe to allMids (global mark prices) ─
+        ws.send(
+          JSON.stringify({ method: "subscribe", subscription: { type: "allMids" } })
+        );
+        // ─ Subscribe to L2 order book ─
+        ws.send(
+          JSON.stringify({
+            method: "subscribe",
+            subscription: { type: "l2Book", coin: coin.toUpperCase() },
+          })
+        );
+        // ─ Subscribe to trade tape ─
+        ws.send(
+          JSON.stringify({
+            method: "subscribe",
+            subscription: { type: "trades", coin: coin.toUpperCase() },
+          })
+        );
 
-        // Channel 2: Live Execution Tape Trades Tracker
-        ws.send(JSON.stringify({
-          method: "subscribe",
-          subscription: { type: "trades", coin: coin.toUpperCase() }
-        }));
-
-        // Keep-Alive Loop: Prevents network gateways from dropping idle TCP connections
-        pingInterval = setInterval(() => {
+        // Keepalive ping every 20 s
+        pingTimer = setInterval(() => {
           if (ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ method: "ping" }));
           }
-        }, 15000);
+        }, 20_000);
       };
 
-      ws.onmessage = (event) => {
+      ws.onmessage = (event: MessageEvent) => {
         try {
-          const message = JSON.parse(event.data);
-          
-          // Verify we have received channel stream data matching our subscription specs
-          if (!message || !message.channel) return;
+          const msg = JSON.parse(event.data as string);
+          if (!msg?.channel) return;
 
-          if (message.channel === "l2Book" && message.data?.coin === coin.toUpperCase()) {
-            incomingBookRef.current = {
-              bids: message.data.levels[0] || [],
-              asks: message.data.levels[1] || [],
-            };
-          } 
-          
-          else if (message.channel === "trades" && Array.isArray(message.data)) {
-            const parsedTrades: PublicTrade[] = message.data
-              .filter((t: any) => t.coin === coin.toUpperCase())
-              .map((t: any) => ({
-                id: `${t.tid}-${t.time}`,
-                time: new Date(t.time).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-                price: parseFloat(t.px),
-                size: parseFloat(t.sz),
-                side: t.side === "B" ? "buy" : "sell", // B = Buy, Sell otherwise
-              }));
-
-            if (parsedTrades.length > 0) {
-              // Prepend newest incoming executions to the tape matrix buffer
-              incomingTradesRef.current = [...parsedTrades, ...incomingTradesRef.current].slice(0, 50);
+          switch (msg.channel) {
+            // ─ allMids: update live mark price ─
+            case "allMids": {
+              const price = msg.data?.mids?.[coin.toUpperCase()];
+              if (price) {
+                currentPriceRef.current = parseFloat(price);
+              }
+              break;
             }
+
+            // ─ L2 book update ─
+            case "l2Book": {
+              if (msg.data?.coin?.toUpperCase() === coin.toUpperCase()) {
+                rawBidsRef.current = msg.data.levels?.[0] ?? [];
+                rawAsksRef.current = msg.data.levels?.[1] ?? [];
+              }
+              break;
+            }
+
+            // ─ Trade tape ─
+            case "trades": {
+              if (!Array.isArray(msg.data)) break;
+              const parsed: PublicTrade[] = msg.data
+                .filter((t: any) => t.coin?.toUpperCase() === coin.toUpperCase())
+                .map((t: any) => ({
+                  id: `${t.tid}-${t.time}`,
+                  time: new Date(t.time).toLocaleTimeString([], {
+                    hour12: false,
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    second: "2-digit",
+                  }),
+                  price: parseFloat(t.px),
+                  size: parseFloat(t.sz),
+                  side: t.side === "B" ? ("buy" as const) : ("sell" as const),
+                }));
+
+              if (parsed.length > 0) {
+                tradesRef.current = [...parsed, ...tradesRef.current].slice(0, 50);
+                // Update price from last trade as fallback
+                if (currentPriceRef.current === 0) {
+                  currentPriceRef.current = parsed[0].price;
+                }
+              }
+              break;
+            }
+
+            default:
+              break;
           }
         } catch (err) {
-          console.error("Frame parsing abnormality encountered:", err);
+          console.error("[HL Stream] Parse error:", err);
         }
       };
 
-      ws.onerror = (error) => {
-        console.error("WebSocket sub-layer pipeline error:", error);
+     ws.onerror = (err) => {
+    // The empty {} happens because the Event object is stripped.
+    // Instead, log the readyState to differentiate between 
+    // "Failed to connect" and "Disconnected while active"
+    console.error(`[HL Stream] WebSocket error occurred. ReadyState: ${ws.readyState}`);
+  };
+
+     ws.onclose = (ev) => {
+    // If code is 1006, it means the connection was closed abnormally 
+    // (often because the server rejected the connection).
+    console.warn(`[HL Stream] Closed. Code: ${ev.code}, Reason: ${ev.reason || "None"}`);
+    setIsConnected(false);
+        clearInterval(pingTimer);
+        if (shouldReconnect) {
+          reconnectTimer = setTimeout(connect, 3_000);
+        }
       };
+    }
 
-      ws.onclose = (e) => {
-        console.warn(`WebSocket closed [Code: ${e.code}]. Executing node recovery loop in 3s...`);
-        setIsConnected(false);
-        clearInterval(pingInterval);
-        
-        reconnectTimeout = setTimeout(() => {
-          connectWS();
-        }, 3000);
-      };
-    };
+    connect();
 
-    connectWS();
-
-    // 3. UI Multi-Thread Throttle Synchronization Loop (Fires every 100ms)
-    uiSyncTimer = setInterval(() => {
-      const rawBids = incomingBookRef.current.bids;
-      const rawAsks = incomingBookRef.current.asks;
+    // ── 3. UI throttle loop: flush refs → React state every 100 ms ───────────
+     uiTimer = setInterval(() => {
+      const rawBids = rawBidsRef.current;
+      const rawAsks = rawAsksRef.current;
 
       let processedBids: OrderbookLevel[] = [];
       let processedAsks: OrderbookLevel[] = [];
-      let accumulatedBidTotal = 0;
-      let accumulatedAskTotal = 0;
+      let bidTotal = 0;
+      let askTotal = 0;
 
       if (rawBids.length > 0 || rawAsks.length > 0) {
-        // Map and format incoming raw bids
         processedBids = rawBids.slice(0, 15).map((item: any) => {
-          const price = parseFloat(item.px);
           const size = parseFloat(item.sz);
-          accumulatedBidTotal += size;
-          return { price, size, total: accumulatedBidTotal };
+          bidTotal += size;
+          return { price: parseFloat(item.px), size, total: bidTotal };
         });
 
-        // Map and format incoming raw asks
         processedAsks = rawAsks.slice(0, 15).map((item: any) => {
-          const price = parseFloat(item.px);
           const size = parseFloat(item.sz);
-          accumulatedAskTotal += size;
-          return { price, size, total: accumulatedAskTotal };
+          askTotal += size;
+          return { price: parseFloat(item.px), size, total: askTotal };
         });
 
-        const topBid = processedBids[0]?.price || currentPriceRef.current;
-        const topAsk = processedAsks[0]?.price || currentPriceRef.current;
-        const midPrice = (topBid + topAsk) / 2;
+        const topBid = processedBids[0]?.price ?? 0;
+        const topAsk = processedAsks[0]?.price ?? 0;
 
-        currentPriceRef.current = midPrice;
-        setMarkPrice(midPrice);
-
-        const currentSpread = Math.abs(topAsk - topBid);
-        setSpread({
-          absolute: currentSpread,
-          percent: midPrice > 0 ? (currentSpread / midPrice) * 100 : 0
-        });
-      } else {
-        // Fallback to update data context if book buffer hasn't filled yet
-        if (currentPriceRef.current > 0) {
-          setMarkPrice(currentPriceRef.current);
+        if (topBid > 0 && topAsk > 0) {
+          const spreadAbs = Math.abs(topAsk - topBid);
+          const mid = (topBid + topAsk) / 2;
+          setSpread({
+            absolute: spreadAbs,
+            percent: mid > 0 ? (spreadAbs / mid) * 100 : 0,
+          });
         }
+      }
+
+      const livePrice = currentPriceRef.current;
+      if (livePrice > 0) {
+        setMarkPrice(livePrice);
       }
 
       setBids(processedBids);
       setAsks(processedAsks);
-      setMaxBookTotal(Math.max(accumulatedBidTotal, accumulatedAskTotal) || 1);
-      setRecentTrades([...incomingTradesRef.current]);
+      setMaxBookTotal(Math.max(bidTotal, askTotal) || 1);
+      setRecentTrades([...tradesRef.current]);
     }, 100);
 
     return () => {
-      clearInterval(uiSyncTimer);
-      clearInterval(pingInterval);
-      clearTimeout(reconnectTimeout);
-      if (ws) ws.close();
+      shouldReconnect = false;
+      clearInterval(uiTimer);
+      clearInterval(pingTimer);
+      clearTimeout(reconnectTimer);
+      ws?.close();
     };
   }, [coin, proxyWsUrl]);
 
-  return { bids, asks, maxBookTotal, recentTrades, markPrice, spread, isConnected, candleHistoryRef, currentPriceRef };
-};
+  return {
+    isConnected,
+    bids,
+    asks,
+    maxBookTotal,
+    recentTrades,
+    markPrice,
+    indexPrice,
+    spread,
+    candleHistoryRef,
+    currentPriceRef,
+  };
+}

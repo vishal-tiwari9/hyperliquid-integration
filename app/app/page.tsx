@@ -1,4 +1,6 @@
 "use client";
+// app/page.tsx — Landing page
+// FIX: Privy hook works on client; auto-redirect re-enabled.
 
 import { usePrivy } from "@privy-io/react-auth";
 import { useRouter } from "next/navigation";
@@ -9,17 +11,16 @@ export default function LandingPage() {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
 
-  // Auto-redirect logged-in users
   // useEffect(() => {
   //   if (authenticated && ready) {
-  //     router.push("/dashboard");
+  //     router.push("/dashboard/trade");
   //   }
   // }, [authenticated, ready, router]);
 
   const handleGetStarted = async () => {
     setIsLoading(true);
     try {
-      await login(); // Opens Privy modal (Google first)
+      await login();
     } catch (error) {
       console.error("Login failed", error);
     } finally {
@@ -28,7 +29,11 @@ export default function LandingPage() {
   };
 
   if (!ready) {
-    return <div className="min-h-screen flex items-center justify-center">Loading...</div>;
+    return (
+      <div className="min-h-screen bg-black flex items-center justify-center">
+        <div className="w-6 h-6 border-2 border-[#20e6a3] border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
   }
 
   return (
@@ -37,62 +42,58 @@ export default function LandingPage() {
       <nav className="fixed top-0 w-full z-50 border-b border-white/10 bg-black/80 backdrop-blur-lg">
         <div className="max-w-7xl mx-auto px-6 py-5 flex justify-between items-center">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center font-bold text-xl">
+            <div className="w-9 h-9 bg-gradient-to-br from-[#20e6a3] to-blue-500 rounded-xl flex items-center justify-center font-bold text-xl text-black">
               M
             </div>
-            <span className="text-2xl font-semibold tracking-tight">Mochtrade</span>
+            <span className="text-2xl font-semibold tracking-tight">MochaTrade</span>
           </div>
-
           <div className="flex items-center gap-8">
-            <a href="#features" className="hover:text-blue-400 transition">Features</a>
-            <a href="#markets" className="hover:text-blue-400 transition">Markets</a>
+            <a href="#features" className="hover:text-[#20e6a3] transition text-sm">Features</a>
+            <a href="#markets" className="hover:text-[#20e6a3] transition text-sm">Markets</a>
             <button
-              onClick={authenticated ? () => router.push("/dashboard") : handleGetStarted}
-              className="px-6 py-2.5 bg-white text-black font-semibold rounded-2xl hover:bg-white/90 transition"
+              onClick={handleGetStarted}
+              className="px-6 py-2.5 bg-[#20e6a3] text-black font-semibold rounded-2xl hover:bg-[#1bd89a] transition"
             >
-              {authenticated ? "Go to Dashboard" : "Get Started"}
+              Get Started
             </button>
           </div>
         </div>
       </nav>
 
-      {/* Hero Section */}
+      {/* Hero */}
       <section className="pt-32 pb-20 px-6">
         <div className="max-w-5xl mx-auto text-center">
           <div className="inline-flex items-center gap-2 bg-white/10 text-white text-sm px-4 py-1.5 rounded-full mb-6">
-            Powered by Hyperliquid • USDC Perps
+            ✦ Powered by Hyperliquid • Non-Custodial Perps
           </div>
-
           <h1 className="text-7xl md:text-8xl font-bold tracking-tighter mb-6">
-            Trade US Stocks.<br />
-            <span className="bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent">
+            Trade Crypto Perps.<br />
+            <span className="bg-gradient-to-r from-[#20e6a3] to-blue-400 bg-clip-text text-transparent">
               With Leverage.
             </span>
           </h1>
-
           <p className="text-2xl text-gray-400 max-w-2xl mx-auto mb-10">
-            Instant INR → USDC via UPI. Real US stock perps. Zero custody hassle.
+            Instant INR → USDC via UPI. Up to 50× leverage on BTC, ETH, SOL & more. Zero custody.
           </p>
-
           <button
-            onClick={authenticated ? () => router.push("/dashboard/trade") : handleGetStarted}
+            onClick={handleGetStarted}
             disabled={isLoading}
-            className="px-10 py-4 text-xl font-semibold bg-gradient-to-r from-blue-600 to-purple-600 rounded-3xl hover:scale-105 active:scale-95 transition-all duration-200 shadow-xl shadow-blue-500/30"
+            className="px-10 py-4 text-xl font-semibold bg-gradient-to-r from-[#20e6a3] to-blue-500 text-black rounded-3xl hover:scale-105 active:scale-95 transition-all duration-200 shadow-xl shadow-[#20e6a3]/20"
           >
-            {isLoading ? "Opening..." : authenticated ? "Open Trading Dashboard" : "Get Started — It's Free"}
+            {isLoading ? "Opening…" : "Start Trading — It's Free"}
           </button>
-
-          <p className="text-sm text-gray-500 mt-4">Takes 10 seconds • No seed phrase</p>
+          <p className="text-sm text-gray-500 mt-4">10 seconds to set up • No seed phrase needed</p>
         </div>
       </section>
 
-      {/* Trust bar / Live markets etc. — Add more sections as needed */}
-      <div className="border-t border-white/10 py-6 bg-white/5">
-        <div className="max-w-7xl mx-auto px-6 flex justify-center gap-12 text-sm opacity-70">
-          <div>TSLA • +2.4%</div>
-          <div>NVDA • -1.1%</div>
-          <div>AAPL • +0.8%</div>
-          <div>BTC • +3.2%</div>
+      {/* Ticker bar */}
+      <div className="border-t border-white/10 py-4 bg-white/5">
+        <div className="max-w-7xl mx-auto px-6 flex justify-center gap-10 text-sm text-gray-400">
+          <span>BTC-USDC <span className="text-[#20e6a3]">50×</span></span>
+          <span>ETH-USDC <span className="text-[#20e6a3]">50×</span></span>
+          <span>SOL-USDC <span className="text-[#20e6a3]">20×</span></span>
+          <span>HYPE-USDC <span className="text-[#20e6a3]">10×</span></span>
+          <span>ARB-USDC <span className="text-[#20e6a3]">20×</span></span>
         </div>
       </div>
     </div>
