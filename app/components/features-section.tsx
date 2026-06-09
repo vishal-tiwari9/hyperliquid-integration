@@ -94,7 +94,9 @@ export function FeaturesSection({
 
         {/* CTAs */}
         <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-          <Button size="lg" className="bg-[#20e6a3] text-black hover:bg-[#1bcba0] px-8">Start Trading Now</Button>
+          <Button size="lg" className="bg-[#20e6a3] text-black hover:bg-[#1bcba0] px-8"  onClick={() => {
+              window.location.href = "/dashboard/trade";
+            }} >Start Trading Now</Button>
           <Button size="lg" variant="outline" className="border-zinc-700 text-white hover:bg-zinc-900 bg-transparent px-8">View Market Pairs</Button>
         </div>
       </div>

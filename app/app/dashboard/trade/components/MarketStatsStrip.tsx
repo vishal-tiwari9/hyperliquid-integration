@@ -128,28 +128,28 @@ export const MarketStatsStrip: React.FC<MarketStatsStripProps> = ({
       </div>
 
       {/* 24h change placeholder */}
-      <div className="hidden md:flex flex-col font-mono">
+      {/* <div className="hidden md:flex flex-col font-mono">
         <span className="text-[10px] text-[#566273] font-bold uppercase tracking-wider">
           24h Change
         </span>
         <span className="text-[#20e6a3] font-bold text-xs">—</span>
-      </div>
+      </div> */}
 
       {/* 24h volume placeholder */}
-      <div className="hidden lg:flex flex-col font-mono">
+      {/* <div className="hidden lg:flex flex-col font-mono">
         <span className="text-[10px] text-[#566273] font-bold uppercase tracking-wider">
           24h Vol
         </span>
         <span className="text-neutral-300 font-bold text-xs">—</span>
-      </div>
+      </div> */}
 
       {/* Open interest placeholder */}
-      <div className="hidden xl:flex flex-col font-mono">
+      {/* <div className="hidden xl:flex flex-col font-mono">
         <span className="text-[10px] text-[#566273] font-bold uppercase tracking-wider">
           OI
         </span>
         <span className="text-neutral-300 font-bold text-xs">—</span>
-      </div>
+      </div> */}
 
       {/* Connection status */}
       <div className="ml-auto flex items-center gap-1.5 text-[10px]">

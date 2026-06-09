@@ -66,8 +66,8 @@ export function Hero({
             <div className="hidden items-center gap-6 text-sm text-white/70 lg:flex">
               <a href="#features" className="transition-colors hover:text-white">Features</a>
               <a href="#markets" className="transition-colors hover:text-white">Markets</a>
-              <a href="#testimonials" className="transition-colors hover:text-white">Testimonials</a>
-              <a href="#pricing" className="transition-colors hover:text-white">Pricing</a>
+              
+              
               <a href="#faq" className="transition-colors hover:text-white">FAQ</a>
             </div>
             
