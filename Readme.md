@@ -4,9 +4,9 @@ A high-performance, low-latency, asynchronous non-custodial trading interface en
 
 ---
 
-## 🔑 Key Architectural Features & Tech Stack
+##  Key Architectural Features & Tech Stack
 
-### 🛠️ Tech Stack Used
+###  Tech Stack Used
 
 * **Frontend Architecture:** Next.js 14 (App Router), TypeScript, Tailwind CSS, Framer Motion
 * **Authentication & Cryptographic Wallet Layer:** Privy (Decoupled Email/Social OAuth with secure embedded non-custodial web3 wallets)
@@ -14,7 +14,7 @@ A high-performance, low-latency, asynchronous non-custodial trading interface en
 * **Network Protocol Layer:** `tokio-tungstenite` (Asynchronous streaming upstream WebSocket connection loops over native TLS)
 * **Concurrence & Distribution:** Tokio broadcast channels (`broadcast::channel`) for highly scalable, zero-allocation down-stream pub/sub delivery
 
-### 📡 Design Pattern: Persistent Upstream + Smart Broadcast Architecture
+###  Design Pattern: Persistent Upstream + Smart Broadcast Architecture
 
 The proxy infrastructure is built using a decoupled, single-connection streaming architecture designed to eliminate redundant network bottlenecks.
 
@@ -24,7 +24,7 @@ The proxy infrastructure is built using a decoupled, single-connection streaming
 
 ---
 
-## 📂 Repository Layout & File Descriptions
+##  Repository Layout & File Descriptions
 
 ```
 MochaTrade/
@@ -53,7 +53,7 @@ The centralized network proxy engine managing systemic connection lifecycles:
 
 ---
 
-## ⚙️ How It Works (End-to-End Data Flow)
+##  How It Works (End-to-End Data Flow)
 
 ```
 [Frontend Clients (Next.js + Privy)]
@@ -74,7 +74,7 @@ The centralized network proxy engine managing systemic connection lifecycles:
 
 ---
 
-## 🛠️ Installation & Execution Guide
+##  Installation & Execution Guide
 
 ### Prerequisites
 
@@ -109,7 +109,7 @@ The high-performance network daemon initiates listeners binding cleanly on proto
 
 ---
 
-## 🌐 Environment Variables Configuration
+##  Environment Variables Configuration
 
 Ensure your configuration matrices are populated within local `.env` files prior to starting initialization tasks:
 
@@ -131,7 +131,7 @@ HL_TESTNET=true # Set to false or omit when deploying directly to production mai
 
 ---
 
-## 🧠 Key Structural Issues Addressed
+##  Key Structural Issues Addressed
 
 * **Latency Variance Elimination:** Restructures chaotic browser-based direct connections into an ordered, single persistent pipeline backend loop to drop network handshake penalties.
 * **Upstream Subscription Optimization:** Controls multi-client streaming waste by implementing an allocation reference-counter, stopping redundant duplicate streams at the exchange level.
@@ -140,7 +140,7 @@ HL_TESTNET=true # Set to false or omit when deploying directly to production mai
 
 ---
 
-## 🤝 Contribution Guidelines
+##  Contribution Guidelines
 
 Contributions are highly valued! To implement performance updates, refactor the orderbook processing architecture, or modify user-facing UI layouts, please follow this pipeline:
 
